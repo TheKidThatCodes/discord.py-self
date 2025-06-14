@@ -315,6 +315,7 @@ class Client:
             'captcha_handler', None
         )
         self.http: HTTPClient = HTTPClient(
+            loop=self.loop,
             proxy=options.pop('proxy', None),
             proxy_auth=options.pop('proxy_auth', None),
             unsync_clock=options.pop('assume_unsync_clock', True),
@@ -850,6 +851,7 @@ class Client:
         loop = asyncio.get_running_loop()
         self.loop = loop
         self._connection.loop = loop
+        self.http.loop = loop
         await self._connection.async_setup()
 
         self._ready = asyncio.Event()
@@ -2463,15 +2465,14 @@ class Client:
         with_mutual_guilds: bool = True,
         with_mutual_friends_count: bool = False,
         with_mutual_friends: bool = True,
-        friend_token: str = MISSING,
     ) -> UserProfile:
         """|coro|
 
         Retrieves a :class:`.UserProfile` based on their user ID.
 
-        You must provide a valid ``friend_token``, share a guild with,
-        be friends with, or have an incoming friend request from this
-        user to get this information, unless the user is a bot.
+        You must share a guild with, be friends with, or have
+        an incoming friend request from this user to
+        get this information, unless the user is a bot.
 
         .. versionchanged:: 2.0
 
@@ -2496,10 +2497,6 @@ class Client:
             This fills in :attr:`.UserProfile.mutual_friends` and :attr:`.UserProfile.mutual_friends_count`.
 
             .. versionadded:: 2.0
-        friend_token: :class:`str`
-            The friend token to use for fetching the profile.
-
-            .. versionadded:: 2.1
 
         Raises
         -------
@@ -2520,7 +2517,6 @@ class Client:
             with_mutual_guilds=with_mutual_guilds,
             with_mutual_friends_count=with_mutual_friends_count,
             with_mutual_friends=with_mutual_friends,
-            friend_token=friend_token or None,
         )
 
         return UserProfile(state=state, data=data)
@@ -3056,32 +3052,6 @@ class Client:
         state = self._connection
         data = await state.http.get_friend_suggestions()
         return [FriendSuggestion(state=state, data=d) for d in data]
-
-    async def friend_token(self) -> str:
-        """|coro|
-
-        Retrieves your friend token.
-
-        These can be used to fetch the user's profile without a mutual
-        and add the user as a friend regardless of their friend request settings.
-
-        To share, append it to the user's URL like so:
-        ``https://discord.com/users/{user.id}?friend_token={friend_token}``.
-
-        .. versionadded:: 2.1
-
-        Raises
-        -------
-        HTTPException
-            Retrieving your friend token failed.
-
-        Returns
-        --------
-        :class:`str`
-            Your friend token.
-        """
-        data = await self.http.get_friend_token()
-        return data['friend_token']
 
     async def fetch_country_code(self) -> str:
         """|coro|

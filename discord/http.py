@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import io
 import logging
 import re
 import ssl
@@ -586,6 +587,7 @@ class HTTPClient:
         self,
         connector: Optional[aiohttp.BaseConnector] = None,
         *,
+        loop: asyncio.AbstractEventLoop,
         proxy: Optional[str] = None,
         proxy_auth: Optional[aiohttp.BasicAuth] = None,
         unsync_clock: bool = True,
@@ -598,6 +600,7 @@ class HTTPClient:
         http_options: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.connector: aiohttp.BaseConnector = connector or MISSING
+        self.loop: asyncio.AbstractEventLoop = loop
         self.__asession: aiohttp.ClientSession = MISSING
         self.__session: rnet.Client = MISSING
         # Route key -> Bucket hash
@@ -721,6 +724,21 @@ class HTTPClient:
             self._try_clear_expired_ratelimits()
         return value
 
+    def _parse_form_data(self, form: List[Dict[str, Any]]) -> asyncio.Future[CurlMime]:
+        def _inner_parse():
+            mime = CurlMime()
+            for part in form:
+                _data = part['data'].read() if isinstance(part['data'], io.IOBase) else part['data']
+                mime.addpart(
+                    part['name'],
+                    data=_data,
+                    filename=part.get('filename'),
+                    content_type=part.get('content_type'),
+                )
+            return mime
+
+        return self.loop.run_in_executor(None, _inner_parse)
+
     async def request(
         self,
         route: Route,
@@ -822,6 +840,7 @@ class HTTPClient:
 
                 if form:
                     kwargs['form'] = [(k, v) for d in form for k, v in d.items()]
+
 
                 if self.tracer:
                     trace_id = self.tracer.generate(self.user_id or 0)
@@ -2669,7 +2688,7 @@ class HTTPClient:
         return self.request(Route('POST', '/channels/{channel_id}/call/ring', channel_id=channel_id), json=payload)
 
     def stop_ringing(self, channel_id: Snowflake, *recipients: Snowflake) -> Response[None]:
-        payload = {'recipients': recipients}
+        payload = {'recipients': recipients} if recipients else {}
         return self.request(Route('POST', '/channels/{channel_id}/call/stop-ringing', channel_id=channel_id), json=payload)
 
     def change_call_voice_region(self, channel_id: int, voice_region: str) -> Response[None]:
@@ -2969,14 +2988,11 @@ class HTTPClient:
         user_id: Snowflake,
         type: Optional[int] = None,
         *,
-        friend_token: Optional[str] = None,
         action: RelationshipAction,
     ) -> Response[None]:
         payload = {}
         if type is not None:
             payload['type'] = type
-        if friend_token:
-            payload['friend_token'] = friend_token
 
         if action is RelationshipAction.accept_request:  # User Profile, Friends, DM Channel
             props = choice(
@@ -3026,9 +3042,6 @@ class HTTPClient:
 
     def delete_friend_suggestion(self, user_id: Snowflake) -> Response[None]:
         return self.request(Route('DELETE', '/friend-suggestions/{user_id}', user_id=user_id))
-
-    def get_friend_token(self) -> Response[user.FriendToken]:
-        return self.request(Route('GET', '/users/@me/friend-token'))
 
     # Connections
 
@@ -4608,7 +4621,6 @@ class HTTPClient:
         with_mutual_guilds: bool = True,
         with_mutual_friends: bool = False,
         with_mutual_friends_count: bool = False,
-        friend_token: Optional[str] = None,
     ) -> Response[profile.Profile]:
         params: Dict[str, Any] = {
             'with_mutual_guilds': str(with_mutual_guilds).lower(),
@@ -4617,8 +4629,6 @@ class HTTPClient:
         }
         if guild_id:
             params['guild_id'] = guild_id
-        if friend_token:
-            params['friend_token'] = friend_token
 
         return self.request(Route('GET', '/users/{user_id}/profile', user_id=user_id), params=params)
 
